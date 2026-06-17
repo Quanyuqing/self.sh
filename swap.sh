@@ -31,6 +31,7 @@ check_dependencies() {
         grep
         sed
         df
+        du
         free
         dd
         chmod
@@ -111,23 +112,39 @@ check_disk_space_mb() {
     local required_mb="$1"
     local avail_mb
     local reserve_mb
+    local reclaimable_mb=0
+    local effective_avail_mb
     local needed_mb
 
     avail_mb=$(get_root_available_mb)
     reserve_mb=$(get_reserved_space_mb)
+
+    # 如果准备替换现有 /swapfile，则把其占用空间计入可释放空间
+    if [ -f "$SWAP_FILE" ] && [ ! -L "$SWAP_FILE" ]; then
+        reclaimable_mb=$(du -m "$SWAP_FILE" 2>/dev/null | awk '{print $1}')
+        reclaimable_mb=${reclaimable_mb:-0}
+    fi
+
+    effective_avail_mb=$((avail_mb + reclaimable_mb))
     needed_mb=$((required_mb + reserve_mb))
 
     echo ""
     echo "📊 磁盘空间检查："
     echo "   当前可用：$(format_size "$avail_mb")"
-    echo "   Swap 大小：$(format_size "$required_mb")"
+
+    if [ "$reclaimable_mb" -gt 0 ]; then
+        echo "   旧 Swap 可释放：$(format_size "$reclaimable_mb")"
+        echo "   替换后可用：$(format_size "$effective_avail_mb")"
+    fi
+
+    echo "   新 Swap 大小：$(format_size "$required_mb")"
     echo "   安全预留：$(format_size "$reserve_mb")"
 
-    if [ "$avail_mb" -lt "$needed_mb" ]; then
+    if [ "$effective_avail_mb" -lt "$needed_mb" ]; then
         echo ""
         echo "❌ 磁盘空间不足。"
         echo "至少需要可用空间：$(format_size "$needed_mb")"
-        echo "当前只有：$(format_size "$avail_mb")"
+        echo "计算旧 Swap 可释放空间后，当前可用：$(format_size "$effective_avail_mb")"
         return 1
     fi
 
